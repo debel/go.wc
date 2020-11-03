@@ -44,7 +44,7 @@ func requestGameInfo(id string) ([]byte, error) {
 }
 
 func main() {
-	gameId := "1234567"
+	gameId := "11"
 	response, err := requestGameInfo(gameId)
 	if err != nil {
 		log.Fatalln(err)
