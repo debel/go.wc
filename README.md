@@ -1,0 +1,3 @@
+# go.wc
+
+A playground repo where I try to learn go...
