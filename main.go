@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"sync"
 )
 
 type BoardGameName struct {
@@ -75,9 +76,13 @@ type NameOrError struct {
 	Error  error
 }
 
-func getGameName(gameId string, readyChan chan<- NameOrError) {
+func getGameName(gameId string, results chan<- NameOrError, wg *sync.WaitGroup) {
 	var outcome NameOrError
-	defer func() { readyChan <- outcome }()
+
+	defer func() {
+		results <- outcome
+		wg.Done()
+	}()
 
 	data, err := requestGameInfo(gameId)
 	if err != nil {
@@ -95,14 +100,21 @@ func getGameName(gameId string, readyChan chan<- NameOrError) {
 }
 
 func main() {
+	var wg sync.WaitGroup
 	ch := make(chan NameOrError)
+
 	for i := 0; i < 100; i += 1 {
-		go getGameName(fmt.Sprint(i), ch)
+		wg.Add(1)
+		go getGameName(fmt.Sprint(i), ch, &wg)
 	}
 
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
 	outcomes := make(map[string]string)
-	for j := 0; j < 100; j += 1 {
-		gameInfo := <-ch
+	for gameInfo := range ch {
 		if gameInfo.Error != nil {
 			outcomes[gameInfo.GameId] = fmt.Sprint(gameInfo.Error)
 		} else {
