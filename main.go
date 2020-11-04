@@ -2,8 +2,8 @@ package main
 
 import (
 	"encoding/xml"
+	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 )
 
@@ -23,13 +23,7 @@ type BGGResponse struct {
 	BoardGames []BoardGame `xml:"item"`
 }
 
-func parseXML(xmlString []byte) (BGGResponse, error) {
-	var data BGGResponse
-	err := xml.Unmarshal(xmlString, &data)
-	return data, err
-}
-
-func requestGameInfo(id string) ([]byte, error) {
+func requestGameInfo(id string) (*BGGResponse, error) {
 	resp, err := http.Get("https://www.boardgamegeek.com/xmlapi2/thing?id=" + id)
 	if err != nil {
 		return nil, err
@@ -40,31 +34,81 @@ func requestGameInfo(id string) ([]byte, error) {
 		return nil, err
 	}
 
-	return body, nil
+	var data BGGResponse
+	err = xml.Unmarshal(body, &data)
+	if err != nil {
+		return nil, err
+	}
+
+	return &data, nil
+}
+
+type GameNotFound struct{}
+
+func (e *GameNotFound) Error() string {
+	return "Game not found"
+}
+
+type GameNameMissing struct{}
+
+func (e *GameNameMissing) Error() string {
+	return "Missing game name"
+}
+
+func extractGameName(bggResponse *BGGResponse) (string, error) {
+	if len(bggResponse.BoardGames) == 0 {
+		return "", &GameNotFound{}
+	}
+
+	for _, name := range bggResponse.BoardGames[0].Names {
+		if name.Type == "primary" {
+			return name.Name, nil
+		}
+	}
+
+	return "", &GameNameMissing{}
+}
+
+type NameOrError struct {
+	GameId string
+	Name   string
+	Error  error
+}
+
+func getGameName(gameId string, readyChan chan<- NameOrError) {
+	var outcome NameOrError
+	defer func() { readyChan <- outcome }()
+
+	data, err := requestGameInfo(gameId)
+	if err != nil {
+		outcome = NameOrError{GameId: gameId, Error: err}
+		return
+	}
+
+	name, err := extractGameName(data)
+	if err != nil {
+		outcome = NameOrError{GameId: gameId, Error: err}
+		return
+	}
+
+	outcome = NameOrError{GameId: gameId, Name: name}
 }
 
 func main() {
-	gameId := "11"
-	response, err := requestGameInfo(gameId)
-	if err != nil {
-		log.Fatalln(err)
-		panic(err)
+	ch := make(chan NameOrError)
+	for i := 0; i < 100; i += 1 {
+		go getGameName(fmt.Sprint(i), ch)
 	}
 
-	data, err := parseXML(response)
-	if err != nil {
-		log.Fatalln(err)
-		panic(err)
-	}
-
-	if len(data.BoardGames) == 0 {
-		log.Fatalln("No game found with id " + gameId)
-		panic(1)
-	}
-
-	for _, name := range data.BoardGames[0].Names {
-		if name.Type == "primary" {
-			log.Printf(name.Name)
+	outcomes := make(map[string]string)
+	for j := 0; j < 100; j += 1 {
+		gameInfo := <-ch
+		if gameInfo.Error != nil {
+			outcomes[gameInfo.GameId] = fmt.Sprint(gameInfo.Error)
+		} else {
+			outcomes[gameInfo.GameId] = gameInfo.Name
 		}
 	}
+
+	fmt.Println(outcomes)
 }
